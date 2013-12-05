@@ -131,7 +131,6 @@ class ExpiringLruCacheSpec extends Specification with NoTimeConversions {
   step(system.shutdown())
 
   def lruCache[T](maxCapacity: Int = 500, initialCapacity: Int = 16,
-                  timeToLive: Duration = Duration.Inf, timeToIdle: Duration = Duration.Inf) =
+                  timeToLive: Duration = Duration.Inf, timeToIdle: Duration = Duration.Inf): ExpiringCache[T] =
     new ExpiringLruCache[T](maxCapacity, initialCapacity, timeToLive, timeToIdle)
-
 }

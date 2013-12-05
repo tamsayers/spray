@@ -105,27 +105,10 @@ final class SimpleLruCache[V](val maxCapacity: Int, val initialCapacity: Int) ex
  * @param timeToLive the time-to-live in millis, zero for disabling ttl-expiration
  * @param timeToIdle the time-to-idle in millis, zero for disabling tti-expiration
  */
-final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
-                                timeToLive: Duration, timeToIdle: Duration) extends Cache[V] {
-  require(!timeToLive.isFinite || !timeToIdle.isFinite || timeToLive > timeToIdle,
-    s"timeToLive($timeToLive) must be greater than timeToIdle($timeToIdle)")
-
-  private[caching] val store = new ConcurrentLinkedHashMap.Builder[Any, Entry[V]]
-    .initialCapacity(initialCapacity)
-    .maximumWeightedCapacity(maxCapacity)
-    .build()
-
-  @tailrec
-  def get(key: Any): Option[Future[V]] = store.get(key) match {
-    case null ⇒ None
-    case entry if (isAlive(entry)) ⇒
-      entry.refresh()
-      Some(entry.future)
-    case entry ⇒
-      // remove entry, but only if it hasn't been removed and reinserted in the meantime
-      if (store.remove(key, entry)) None // successfully removed
-      else get(key) // nope, try again
-  }
+final class ExpiringLruCache[V](val maxCapacity: Long,
+                                val initialCapacity: Int,
+                                val timeToLive: Duration,
+                                val timeToIdle: Duration) extends ExpiringCache[V] {
 
   def apply(key: Any, genValue: () ⇒ Future[V])(implicit ec: ExecutionContext): Future[V] = {
     def insert() = {
@@ -157,20 +140,6 @@ final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
       case entry ⇒ insert()
     }
   }
-
-  def remove(key: Any) = store.remove(key) match {
-    case null                      ⇒ None
-    case entry if (isAlive(entry)) ⇒ Some(entry.future)
-    case entry                     ⇒ None
-  }
-
-  def clear(): Unit = { store.clear() }
-
-  def size = store.size
-
-  private def isAlive(entry: Entry[V]) =
-    (entry.created + timeToLive).isFuture &&
-      (entry.lastAccessed + timeToIdle).isFuture
 }
 
 private[caching] class Entry[T](val promise: Promise[T]) {
