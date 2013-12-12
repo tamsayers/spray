@@ -128,10 +128,38 @@ class ExpiringLruCacheSpec extends Specification with NoTimeConversions {
     }
   }
 
+  "An expiring LruCache with stale on error" should {
+
+    "return stale values on error" in {
+      val cache = lruCache[String](timeToLive = 75 millis span, staleOnError = true)
+      cache(1)("A").await === "A"
+      cache(2)("B").await === "B"
+      Thread.sleep(50)
+      cache(3)("C").await === "C"
+      cache.size === 3
+      Thread.sleep(50)
+      cache(2)((throw new RuntimeException("Naa")): String).await === "B" // stale on error
+    }
+
+    "return stale values on error the replace when ok" in {
+      val cache = lruCache[String](timeToLive = 75 millis span, staleOnError = true)
+      cache(1)("A").await === "A"
+      cache(2)("B").await === "B"
+      Thread.sleep(50)
+      cache(3)("C").await === "C"
+      cache.size === 3
+      Thread.sleep(50)
+      cache(2)((throw new RuntimeException("Naa")): String).await === "B" // stale on error
+      cache(2)("OK").await === "OK"
+    }
+  }
+
   step(system.shutdown())
 
-  def lruCache[T](maxCapacity: Int = 500, initialCapacity: Int = 16,
-                  timeToLive: Duration = Duration.Inf, timeToIdle: Duration = Duration.Inf) =
-    new ExpiringLruCache[T](maxCapacity, initialCapacity, timeToLive, timeToIdle)
-
+  def lruCache[T](maxCapacity: Int = 500,
+                  initialCapacity: Int = 16,
+                  timeToLive: Duration = Duration.Inf,
+                  timeToIdle: Duration = Duration.Inf,
+                  staleOnError: Boolean = false) =
+    new ExpiringLruCache[T](maxCapacity, initialCapacity, timeToLive, timeToIdle, staleOnError)
 }

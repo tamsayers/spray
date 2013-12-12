@@ -105,8 +105,12 @@ final class SimpleLruCache[V](val maxCapacity: Int, val initialCapacity: Int) ex
  * @param timeToLive the time-to-live in millis, zero for disabling ttl-expiration
  * @param timeToIdle the time-to-idle in millis, zero for disabling tti-expiration
  */
-final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
-                                timeToLive: Duration, timeToIdle: Duration) extends Cache[V] {
+final class ExpiringLruCache[V](maxCapacity: Long,
+                                initialCapacity: Int,
+                                timeToLive: Duration,
+                                timeToIdle: Duration,
+                                staleOnError: Boolean = false) extends Cache[V] {
+
   require(!timeToLive.isFinite || !timeToIdle.isFinite || timeToLive > timeToIdle,
     s"timeToLive($timeToLive) must be greater than timeToIdle($timeToIdle)")
 
@@ -130,8 +134,7 @@ final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
   def apply(key: Any, genValue: () ⇒ Future[V])(implicit ec: ExecutionContext): Future[V] = {
     def insert() = {
       val newEntry = new Entry(Promise[V]())
-      val valueFuture =
-        store.put(key, newEntry) match {
+      val valueFuture = store.put(key, newEntry) match {
           case null ⇒ genValue()
           case entry ⇒
             if (isAlive(entry)) {
@@ -140,8 +143,17 @@ final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
               // but since the original entry is also still alive this doesn't matter
               newEntry.created = entry.created
               entry.future
-            } else genValue()
+            } else if (staleOnError) genValue().recoverWith {
+              case e: Exception ⇒ {
+                // monitoring exceptions so not silently swallowed
+                // serve stale on all exceptions or should some bubble through
+                // newEntry.created = entry.created
+                entry.future
+              }
+            }
+            else genValue()
         }
+      
       valueFuture.onComplete { value ⇒
         newEntry.promise.tryComplete(value)
         // in case of exceptions we remove the cache entry (i.e. try again later)
@@ -168,7 +180,7 @@ final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
 
   def size = store.size
 
-  private def isAlive(entry: Entry[V]) =
+  private[caching] def isAlive(entry: Entry[V]) =
     (entry.created + timeToLive).isFuture &&
       (entry.lastAccessed + timeToIdle).isFuture
 }
