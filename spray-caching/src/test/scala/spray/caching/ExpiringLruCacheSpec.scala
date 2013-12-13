@@ -129,28 +129,25 @@ class ExpiringLruCacheSpec extends Specification with NoTimeConversions {
   }
 
   "An expiring LruCache with stale on error" should {
-
+    def staleOnError = new StaleOnErrorHandler {
+      def handle[T](value: Future[T], e: Exception): (Future[T], Duration) = {
+        (value, 25 millis)
+      }
+    }
     "return stale values on error" in {
-      val cache = lruCache[String](timeToLive = 75 millis span, staleOnError = true)
+      val cache = lruCache[String](timeToLive = 75 millis span, staleOnErrorHandler = Some(staleOnError))
       cache(1)("A").await === "A"
-      cache(2)("B").await === "B"
-      Thread.sleep(50)
-      cache(3)("C").await === "C"
-      cache.size === 3
-      Thread.sleep(50)
-      cache(2)((throw new RuntimeException("Naa")): String).await === "B" // stale on error
+      Thread.sleep(100)
+      cache(1)((throw new RuntimeException("Naa")): String).await === "A" // stale on error
     }
 
-    "return stale values on error the replace when ok" in {
-      val cache = lruCache[String](timeToLive = 75 millis span, staleOnError = true)
+    "return stale values on error and retry after expired" in {
+      val cache = lruCache[String](timeToLive = 75 millis span, staleOnErrorHandler = Some(staleOnError))
       cache(1)("A").await === "A"
-      cache(2)("B").await === "B"
-      Thread.sleep(50)
-      cache(3)("C").await === "C"
-      cache.size === 3
-      Thread.sleep(50)
-      cache(2)((throw new RuntimeException("Naa")): String).await === "B" // stale on error
-      cache(2)("OK").await === "OK"
+      Thread.sleep(100)
+      cache(1)((throw new RuntimeException("Naa")): String).await === "A" // stale on error
+      Thread.sleep(30)
+      cache(1)("B").await === "B"
     }
   }
 
@@ -160,6 +157,6 @@ class ExpiringLruCacheSpec extends Specification with NoTimeConversions {
                   initialCapacity: Int = 16,
                   timeToLive: Duration = Duration.Inf,
                   timeToIdle: Duration = Duration.Inf,
-                  staleOnError: Boolean = false) =
-    new ExpiringLruCache[T](maxCapacity, initialCapacity, timeToLive, timeToIdle, staleOnError)
+                  staleOnErrorHandler: Option[StaleOnErrorHandler] = None) =
+    new ExpiringLruCache[T](maxCapacity, initialCapacity, timeToLive, timeToIdle, staleOnErrorHandler)
 }

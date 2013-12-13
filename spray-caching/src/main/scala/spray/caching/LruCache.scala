@@ -49,6 +49,22 @@ object LruCache {
     else
       new SimpleLruCache[V](maxCapacity, initialCapacity)
   }
+
+  def apply[V](handler: StaleOnErrorHandler)(maxCapacity: Int = 500,
+                                             initialCapacity: Int = 16,
+                                             timeToLive: Duration,
+                                             timeToIdle: Duration = Duration.Inf): Cache[V] = {
+    //#
+    def check(dur: Duration, name: String) =
+      require(dur != Duration.Zero,
+        s"Behavior of LruCache.apply changed: Duration.Zero not allowed any more for $name parameter. To disable " +
+          "expiration use Duration.Inf instead of Duration.Zero")
+    // migration help
+    check(timeToLive, "timeToLive")
+    check(timeToIdle, "timeToIdle")
+
+    new ExpiringLruCache[V](maxCapacity, initialCapacity, timeToLive, timeToIdle, Some(handler))
+  }
 }
 
 /**
@@ -90,6 +106,10 @@ final class SimpleLruCache[V](val maxCapacity: Int, val initialCapacity: Int) ex
   def size = store.size
 }
 
+trait StaleOnErrorHandler {
+  def handle[T](value: Future[T], e: Exception): (Future[T], Duration)
+}
+
 /**
  * A thread-safe implementation of [[spray.caching.cache]].
  * The cache has a defined maximum number of entries is can store. After the maximum capacity has been reached new
@@ -109,7 +129,7 @@ final class ExpiringLruCache[V](maxCapacity: Long,
                                 initialCapacity: Int,
                                 timeToLive: Duration,
                                 timeToIdle: Duration,
-                                staleOnError: Boolean = false) extends Cache[V] {
+                                staleOnErrorHandler: Option[StaleOnErrorHandler] = None) extends Cache[V] {
 
   require(!timeToLive.isFinite || !timeToIdle.isFinite || timeToLive > timeToIdle,
     s"timeToLive($timeToLive) must be greater than timeToIdle($timeToIdle)")
@@ -135,25 +155,22 @@ final class ExpiringLruCache[V](maxCapacity: Long,
     def insert() = {
       val newEntry = new Entry(Promise[V]())
       val valueFuture = store.put(key, newEntry) match {
-          case null ⇒ genValue()
-          case entry ⇒
-            if (isAlive(entry)) {
-              // we date back the new entry we just inserted
-              // in the meantime someone might have already seen the too fresh timestamp we just put in,
-              // but since the original entry is also still alive this doesn't matter
-              newEntry.created = entry.created
-              entry.future
-            } else if (staleOnError) genValue().recoverWith {
-              case e: Exception ⇒ {
-                // monitoring exceptions so not silently swallowed
-                // serve stale on all exceptions or should some bubble through
-                // newEntry.created = entry.created
-                entry.future
-              }
+        case null ⇒ genValue()
+        case entry ⇒
+          if (isAlive(entry)) {
+            newEntry.created = entry.created
+            entry.future
+          } else if (staleOnErrorHandler.isDefined) genValue().recoverWith {
+            case e: Exception ⇒ {
+              // serve stale on all exceptions or should some bubble through
+              val (value, staleToLive) = staleOnErrorHandler.get.handle(entry.future, e)
+              newEntry.created = entry.created + (timeToLive - staleToLive)
+              value
             }
-            else genValue()
-        }
-      
+          }
+          else genValue()
+      }
+
       valueFuture.onComplete { value ⇒
         newEntry.promise.tryComplete(value)
         // in case of exceptions we remove the cache entry (i.e. try again later)
