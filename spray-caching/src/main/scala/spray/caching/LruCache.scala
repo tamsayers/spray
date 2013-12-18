@@ -164,7 +164,9 @@ final class ExpiringLruCache[V](maxCapacity: Long,
             case e: Exception ⇒ {
               // serve stale on all exceptions or should some bubble through
               val (value, staleToLive) = staleOnErrorHandler.get.handle(entry.future, e)
-              newEntry.created = entry.created + (timeToLive - staleToLive)
+
+              val newCreatedDifference = (newEntry.created - entry.created) - (timeToLive - staleToLive)
+              newEntry.created = entry.created + newCreatedDifference //(timeToLive - staleToLive)
               value
             }
           }

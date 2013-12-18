@@ -131,22 +131,25 @@ class ExpiringLruCacheSpec extends Specification with NoTimeConversions {
   "An expiring LruCache with stale on error" should {
     def staleOnError = new StaleOnErrorHandler {
       def handle[T](value: Future[T], e: Exception): (Future[T], Duration) = {
-        (value, 25 millis)
+        (value, 150 millis)
       }
     }
+
     "return stale values on error" in {
-      val cache = lruCache[String](timeToLive = 75 millis span, staleOnErrorHandler = Some(staleOnError))
+      val cache = lruCache[String](timeToLive = 100 millis span, staleOnErrorHandler = Some(staleOnError))
       cache(1)("A").await === "A"
-      Thread.sleep(100)
+      Thread.sleep(150)
       cache(1)((throw new RuntimeException("Naa")): String).await === "A" // stale on error
     }
 
     "return stale values on error and retry after expired" in {
-      val cache = lruCache[String](timeToLive = 75 millis span, staleOnErrorHandler = Some(staleOnError))
+      val cache = lruCache[String](timeToLive = 100 millis span, staleOnErrorHandler = Some(staleOnError))
       cache(1)("A").await === "A"
-      Thread.sleep(100)
+      Thread.sleep(150)
       cache(1)((throw new RuntimeException("Naa")): String).await === "A" // stale on error
-      Thread.sleep(30)
+      Thread.sleep(120)
+      cache(1)("B").await === "A"
+      Thread.sleep(60)
       cache(1)("B").await === "B"
     }
   }
